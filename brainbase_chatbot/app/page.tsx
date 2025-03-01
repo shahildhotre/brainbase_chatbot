@@ -46,17 +46,68 @@ interface FlightData {
 
 // Add this component above the Home component
 const FlightCard = ({ flight }: { flight: FlightData }) => {
+  const [isOpen, setIsOpen] = useState(false);
+
   return (
-    <div className="bg-white rounded-lg shadow-md p-4 mb-4">
-      <div className="flex justify-between items-center mb-2">
-        <h3 className="text-lg font-semibold">{flight.origin} → {flight.destination}</h3>
-        <span className="text-xl font-bold text-blue-600">${flight.price.total}</span>
+    <>
+      <div 
+        className="bg-white rounded-lg shadow-md p-4 mb-4 cursor-pointer hover:shadow-lg transition-shadow"
+        onClick={() => setIsOpen(true)}
+      >
+        <div className="flex justify-between items-center mb-2">
+          <h3 className="text-lg font-semibold">{flight.origin} → {flight.destination}</h3>
+          <span className="text-xl font-bold text-blue-600">${flight.price.total}</span>
+        </div>
+        <div className="text-sm text-gray-600">
+          <p>Departure: {new Date(flight.departureDate).toLocaleDateString()}</p>
+          <p>Return: {new Date(flight.returnDate).toLocaleDateString()}</p>
+        </div>
       </div>
-      <div className="text-sm text-gray-600">
-        <p>Departure: {new Date(flight.departureDate).toLocaleDateString()}</p>
-        <p>Return: {new Date(flight.returnDate).toLocaleDateString()}</p>
-      </div>
-    </div>
+
+      <Sheet open={isOpen} onOpenChange={setIsOpen}>
+        <SheetContent>
+          <SheetHeader>
+            <SheetTitle>Flight Details</SheetTitle>
+            <SheetDescription>
+              <div className="space-y-4 mt-4">
+                <div>
+                  <h3 className="text-lg font-semibold">Route</h3>
+                  <p>{flight.origin} → {flight.destination}</p>
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold">Dates</h3>
+                  <p>Departure: {new Date(flight.departureDate).toLocaleDateString()}</p>
+                  <p>Return: {new Date(flight.returnDate).toLocaleDateString()}</p>
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold">Price</h3>
+                  <p className="text-xl font-bold text-blue-600">${flight.price.total}</p>
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold">Links</h3>
+                  <a 
+                    href={flight.links.flightOffers} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="text-blue-500 hover:underline block"
+                  >
+                    View Flight Offer
+                  </a>
+                  <a 
+                    href={flight.links.flightDates} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="text-blue-500 hover:underline block"
+                  >
+                    View Flight Dates
+                  </a>
+                </div>
+              </div>
+            </SheetDescription>
+          </SheetHeader>
+        </SheetContent>
+      </Sheet>
+    </>
   );
 };
 
