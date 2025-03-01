@@ -27,6 +27,7 @@ interface MessageType {
   data?: FlightData[];
   message: string;
   from: 'user' | 'ai';
+  conversation_id?: string;
 }
 
 interface FlightLinks {
@@ -45,8 +46,37 @@ interface FlightData {
 }
 
 // Add this component above the Home component
-const FlightCard = ({ flight }: { flight: FlightData }) => {
+const FlightCard = ({ flight, messages, setMessages, saveToSupabase }: { flight: FlightData, messages: MessageType[], setMessages: (messages: any) => void, saveToSupabase: (message: string, from: 'user' | 'ai', type: string|null, data: any|null, conversation_id?: string) => void  }) => {
   const [isOpen, setIsOpen] = useState(false);
+  const [sheetMessage, setSheetMessage] = useState("");
+  const conversationId = useRef(`flight_${flight.origin}_${flight.destination}_${flight.departureDate}`);
+  
+
+
+  const handleSheetSend = async () => {
+    if (!sheetMessage.trim()) return;
+    
+    const newMessage = {
+      message: sheetMessage,
+      from: 'user' as "user"|"ai",
+      conversation_id: conversationId.current
+    } as MessageType;
+
+    // Send message to backend with flight context
+    socket.emit('chat_message', {
+      messages: [...messages, newMessage],
+      context: {
+        flightDetails: flight,
+        conversation_id: conversationId.current
+      }
+    });
+
+    setMessages((prev: any) => [...prev, newMessage]);
+    setSheetMessage("");
+    
+    // Save to Supabase with conversation_id
+    await saveToSupabase(sheetMessage, 'user', null, null, conversationId.current);
+  };
 
   return (
     <>
@@ -65,7 +95,7 @@ const FlightCard = ({ flight }: { flight: FlightData }) => {
       </div>
 
       <Sheet open={isOpen} onOpenChange={setIsOpen}>
-        <SheetContent>
+        <SheetContent className="flex flex-col h-full">
           <SheetHeader>
             <SheetTitle>Flight Details</SheetTitle>
             <SheetDescription>
@@ -105,6 +135,53 @@ const FlightCard = ({ flight }: { flight: FlightData }) => {
               </div>
             </SheetDescription>
           </SheetHeader>
+
+          {/* Chat Section */}
+          <div className="flex-1 overflow-y-auto mt-6">
+            <div className="space-y-4">
+              {messages.filter((msg: MessageType) => msg.conversation_id === conversationId.current).map((msg, index) => (
+                <div 
+                  key={index} 
+                  className={`flex items-start ${msg.from === 'user' ? 'justify-end' : 'justify-start'}`}
+                >
+                  <div 
+                    className={`rounded-lg p-3 max-w-[70%] ${
+                      msg.from === 'user' 
+                        ? 'bg-gray-200 text-gray-800' 
+                        : 'bg-blue-500 text-white'
+                    }`}
+                  >
+                    <p>{msg.message}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Input Area */}
+          <div className="border-t mt-4 pt-4">
+            <div className="flex space-x-2">
+              <input
+                type="text"
+                value={sheetMessage}
+                onChange={(e) => setSheetMessage(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSheetSend();
+                  }
+                }}
+                placeholder="Ask about this flight..."
+                className="flex-1 border rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button 
+                onClick={handleSheetSend} 
+                className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors"
+              >
+                Send
+              </button>
+            </div>
+          </div>
         </SheetContent>
       </Sheet>
     </>
@@ -117,7 +194,7 @@ export default function Home() {
     {message: "Hello! How can I help you today?", from: 'ai'}
   ]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
+  const mainConversationId = useRef('main_chat');
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -151,8 +228,9 @@ export default function Home() {
       const aiMessage = response.message;
       const aiData = response.data as FlightData[];
       const aiType = response.type;
-      setMessages(prev => [...prev, {message: aiMessage, from: 'ai', type: aiType, data: aiData}]);
-      saveToSupabase(aiMessage, 'ai', aiType, aiData);
+      const aiConversationId = response.conversation_id;
+      setMessages(prev => [...prev, {message: aiMessage, from: 'ai', type: aiType, data: aiData, conversation_id: aiConversationId}]);
+      saveToSupabase(aiMessage, 'ai', aiType, aiData, aiConversationId);
     });
 
     // Fetch existing messages from Supabase
@@ -168,9 +246,21 @@ export default function Home() {
     };
   }, []);
 
-  const saveToSupabase = async (message: string, from: 'user' | 'ai', type: string|null, data: any|null) => {
+  const saveToSupabase = async (
+    message: string, 
+    from: 'user' | 'ai', 
+    type: string|null, 
+    data: any|null, 
+    conversation_id?: string
+  ) => {
     const supabase = createClient();
-    await supabase.from('brainbase_chathistory').insert({message, from, type, data});
+    await supabase.from('brainbase_chathistory').insert({
+      message, 
+      from, 
+      type, 
+      data,
+      conversation_id
+    });
   };
 
   const fetchMessages = async () => {
@@ -192,17 +282,24 @@ export default function Home() {
   const handleSend = async () => {
     if (!message.trim()) return;
     
-    const newMessage = {message, from: 'user' as "user"|"ai"};
+    const newMessage = {
+      message, 
+      from: 'user' as "user"|"ai",
+      conversation_id: mainConversationId.current
+    };
 
     // Send message to backend
     socket.emit('chat_message', {
-      messages: [...messages, newMessage]
+      messages: [...messages, newMessage],
+      context: {
+        conversation_id: mainConversationId.current
+      }
     });
 
     setMessages(prev => [...prev, newMessage]);
     
     setMessage("");
-    await saveToSupabase(message, 'user', null, null);
+    await saveToSupabase(message, 'user', null, null, mainConversationId.current);
   };
 
   return (
@@ -224,28 +321,30 @@ export default function Home() {
 
           {/* Messages */}
           {messages.map((msg, index) => (
-            <div 
-              key={index} 
-              className={`flex items-start ${msg.from === 'user' ? 'justify-end' : 'justify-start'}`}
-            >
+            msg.conversation_id === mainConversationId.current && (
               <div 
-                className={`rounded-lg p-3 max-w-[70%] ${
-                  msg.from === 'user' 
-                    ? 'bg-gray-200 text-gray-800' 
-                    : 'bg-blue-500 text-white'
-                }`}
+                key={index} 
+                className={`flex items-start ${msg.from === 'user' ? 'justify-end' : 'justify-start'}`}
               >
-                {msg.data && Array.isArray(msg.data) && msg.type === 'flight-results' ? (
-                  <div className="space-y-2">
-                    {msg.data.map((flight: FlightData, idx: number) => (
-                      <FlightCard key={idx} flight={flight} />
-                    ))}
-                  </div>
-                ) : (
-                  <p>{msg.message}</p>
-                )}
+                <div 
+                  className={`rounded-lg p-3 max-w-[70%] ${
+                    msg.from === 'user' 
+                      ? 'bg-gray-200 text-gray-800' 
+                      : 'bg-blue-500 text-white'
+                  }`}
+                >
+                  {msg.data && Array.isArray(msg.data) && msg.type === 'flight-results' ? (
+                    <div className="space-y-2">
+                      {msg.data.map((flight: FlightData, idx: number) => (
+                        <FlightCard key={idx} flight={flight} messages={messages} setMessages={setMessages} saveToSupabase={saveToSupabase} />
+                      ))}
+                    </div>
+                  ) : (
+                    <p>{msg.message}</p>
+                  )}
+                </div>
               </div>
-            </div>
+            )
           ))}
 
           <div ref={messagesEndRef} />
