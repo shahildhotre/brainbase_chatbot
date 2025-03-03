@@ -116,11 +116,11 @@ const FlightCard = ({ flight, messages, setMessages, saveToSupabase }: { flight:
     // Get only relevant messages for this conversation
     const relevantMessages = messages.filter(msg => msg.conversation_id === conversationId.current);
 
-    // Send message to backend with flight context and parent conversation ID
+    // Send message to backend with context including both flight and hotel details
     socket.emit('chat_message', {
       messages: [...relevantMessages, newMessage],
       context: {
-        flightDetails: flight,
+        flightDetails: flight || null,
         conversation_id: conversationId.current,
         parent_conversation_id: parentConversationId
       }
@@ -145,8 +145,10 @@ const FlightCard = ({ flight, messages, setMessages, saveToSupabase }: { flight:
           <span className="text-xl font-bold text-blue-600">${flight.price.total}</span>
         </div>
         <div className="text-sm text-gray-600">
-          <p>Departure: {new Date(flight.itineraries[0].segments[0].departure.at).toLocaleDateString()}</p>
-          <p>Return: {new Date(flight.itineraries[0].segments[0].arrival.at).toLocaleDateString()}</p>
+          <p>Departure: {new Date(flight.itineraries[0].segments[0].departure.at).toLocaleString()}</p>
+          <p>Arrival: {new Date(flight.itineraries[0].segments[0].arrival.at).toLocaleString()}</p>
+          <p>Airline: {flight.itineraries[0].segments[0].carrierCode} {flight.itineraries[0].segments[0].number}</p>
+          <p>Duration: {flight.itineraries[0].duration}</p>
         </div>
       </div>
 
@@ -163,18 +165,22 @@ const FlightCard = ({ flight, messages, setMessages, saveToSupabase }: { flight:
                       <p>{flight.itineraries[0].segments[0].departure.iataCode} → {flight.itineraries[0].segments[0].arrival.iataCode}</p>
                     </div>
                     <div>
-                      <h3 className="text-lg font-semibold">Dates</h3>
-                      <p>Departure: {new Date(flight.itineraries[0].segments[0].departure.at).toLocaleDateString()}</p>
-                      <p>Return: {new Date(flight.itineraries[0].segments[0].arrival.at).toLocaleDateString()}</p>
+                      <h3 className="text-lg font-semibold">Times</h3>
+                      <p>Departure: {new Date(flight.itineraries[0].segments[0].departure.at).toLocaleString()}</p>
+                      <p>Arrival: {new Date(flight.itineraries[0].segments[0].arrival.at).toLocaleString()}</p>
+                      <p>Duration: {flight.itineraries[0].duration}</p>
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-semibold">Airline</h3>
+                      <p>Carrier: {flight.itineraries[0].segments[0].carrierCode}</p>
+                      <p>Flight: {flight.itineraries[0].segments[0].carrierCode} {flight.itineraries[0].segments[0].number}</p>
                     </div>
                     <div>
                       <h3 className="text-lg font-semibold">Price</h3>
                       <p className="text-xl font-bold text-blue-600">${flight.price.total}</p>
                     </div>
                     <div>
-                      <h3 className="text-lg font-semibold">Flight Details</h3>
-                      <p>Flight Number: {flight.itineraries[0].segments[0].carrierCode} {flight.itineraries[0].segments[0].number}</p>
-                      <p>Duration: {flight.itineraries[0].duration}</p>
+                      <h3 className="text-lg font-semibold">Additional Details</h3>
                       {flight.itineraries[0].segments[0].departure.terminal && (
                         <p>Departure Terminal: {flight.itineraries[0].segments[0].departure.terminal}</p>
                       )}
@@ -260,6 +266,7 @@ const HotelCard = ({ hotel, messages, setMessages, saveToSupabase }: {
     `child_hotel_${hotel.hotelId}_${hotel.iataCode}`
   );
 
+
   const handleSheetSend = async () => {
     if (!sheetMessage.trim()) return;
     
@@ -273,7 +280,7 @@ const HotelCard = ({ hotel, messages, setMessages, saveToSupabase }: {
     // Get only relevant messages for this conversation
     const relevantMessages = messages.filter(msg => msg.conversation_id === conversationId.current);
 
-    // Send message to backend with hotel context
+    // Send message to backend with context including hotel details
     socket.emit('chat_message', {
       messages: [...relevantMessages, newMessage],
       context: {

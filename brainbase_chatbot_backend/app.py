@@ -51,8 +51,24 @@ async def chat_message(sid, data):
             # Handle sheet-specific logic here
             # The context will already include flight details from the original emit
             flight_context = data.get('context', {}).get('flightDetails')
+            hotel_context = data.get('context', {}).get('hotelDetails')
             if flight_context:
                 print(f"Flight context available: {flight_context}")
+                follow_up_response_msg = follow_up_response(flight_context, conversation_history[-1]['message'], conversation_id)
+
+
+            if hotel_context:
+                print(f"Hotel context available: {hotel_context}")
+                follow_up_response_msg = follow_up_response(hotel_context, conversation_history[-1]['message'], conversation_id)
+                print("Follow up response msg: ", follow_up_response_msg)
+
+            if(follow_up_response_msg != "booking_completed"):
+                await sio.emit('chat_response', {
+                'status': 'success',
+                    'message': follow_up_response_msg,
+                    'conversation_id': conversation_id
+                })
+                return
 
             await sio.emit('chat_response', {
                 'status': 'success',
@@ -269,6 +285,8 @@ def validate_task_info_response(response, category):
             required_keys = {'origin', 'destination', 'date'}
         elif category == "hotels":
             required_keys = {'destination', 'date'}
+        elif category == "return_journey":
+            required_keys = {'return_journey'}
        
 
         if not all(key in response_dict for key in required_keys):
@@ -300,7 +318,7 @@ async def search_flights(conversation_history, sid, conversation_id, categories,
             {{
                 "origin": "San Francisco",
                 "destination": "New York",
-                "date": "2025-01-01"
+                "date": "2025-01-01",
             }}
 
             if any of the information is missing, then return the information in the following json format:
@@ -308,14 +326,14 @@ async def search_flights(conversation_history, sid, conversation_id, categories,
             {{
                 "origin": "San Francisco",
                 "destination": "not_available",
-                "date": "2025-01-01"
+                "date": "2025-01-01",
             }}
 
             Response Example:
             {{
                 "origin": "San Francisco",
                 "destination": "not_available",
-                "date": "not_available"
+                "date": "not_available",
             }}  
 
             Rule: Stick with the above format, no other response is allowed. You should not ask any questions.
@@ -373,6 +391,50 @@ async def search_flights(conversation_history, sid, conversation_id, categories,
             task_metadata[conversation_id]['origin'] = origin
             task_metadata[conversation_id]['destination'] = destination
             task_metadata[conversation_id]['date'] = date
+
+    # ReturnFlight = True
+    # while(ReturnFlight == True):
+
+    #     system_prompt = f'''
+
+    #         You are a flight search assistant. Your responsibility is to search for return journey information from the user conversation history and respond in the following format.
+
+    #         if return journey is required, then return the information in the following json format:
+    #         Response Example:
+    #         {{
+    #             "return_journey": "yes"
+    #         }}
+
+    #         if return journey is not required, then return the information in the following json format:
+    #         Response Example:
+    #         {{
+    #             "return_journey": "no"
+    #         }}
+
+    #         Rule: Stick with the above format, no other response is allowed. You should not ask any questions.
+    #     '''
+
+    #     formatted_messages = []
+    #     for msg in conversation_history:
+    #         if isinstance(msg, dict) and 'message' in msg:
+    #             formatted_messages.append(msg['message'])
+        
+    #     conversation_text = "\n".join(formatted_messages)
+
+    #     response = gpt_response(system_prompt, conversation_text)
+
+    #     print("Response: ", response)
+
+    #     is_valid, return_journey = validate_task_info_response(response, "return_journey")
+
+    #     if not is_valid:
+    #         print("Invalid response format, retrying...")
+    #         continue
+
+    #     if return_journey == "yes":
+
+    #         system_prompt = f''' Ask for return date
+        
 
 
             # Now that we have all information, perform the actual flight search
@@ -790,6 +852,23 @@ async def process_task(task, conversation_history, sid, conversation_id, categor
         return 
     
     return
+
+def follow_up_response(context, user_message, conversation_id):
+
+    system_prompt = f'''
+
+        You are an AI assistant. Your responsibility is to user context {context}  to answer user's message
+
+        if user message is for booking then respond with one word answer "booking_completed"
+
+    '''
+
+    response = gpt_response(system_prompt, user_message)
+
+    if "booking" in response:
+        response = "booking_completed"
+
+    return response
 
 if __name__ == '__main__':
     web.run_app(app, host='0.0.0.0', port=8000)
