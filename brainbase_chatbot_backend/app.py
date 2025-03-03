@@ -60,6 +60,13 @@ async def chat_message(sid, data):
                 'conversation_id': conversation_id
             })
 
+            current_task = task_metadata[parent_conversation_id]['current_task']
+            await sio.emit('chat_response', {
+                'status': 'success',
+                'message': f"{current_task} booking is completed",
+                'conversation_id': parent_conversation_id
+            })
+
             print("Parent conversation id: ", parent_conversation_id)
 
             task_metadata[parent_conversation_id]['categories_count'] = task_metadata[parent_conversation_id]['categories_count'] - 1
@@ -72,6 +79,31 @@ async def chat_message(sid, data):
                     'conversation_id': parent_conversation_id
                 })
 
+                    
+
+                task_metadata[parent_conversation_id]['step_by_step']['completed'] = False
+                task_metadata[parent_conversation_id]['generic']['completed'] = False
+                task_metadata[parent_conversation_id]['step_by_step']['data'] = None
+                task_metadata[parent_conversation_id]['generic']['data'] = None
+                task_metadata[parent_conversation_id]['flights']['completed'] = False
+                task_metadata[parent_conversation_id]['hotels']['completed'] = False
+                task_metadata[parent_conversation_id]['transports']['completed'] = False
+                task_metadata[parent_conversation_id]['experiences']['completed'] = False
+            else:
+                # Get the next task to process
+                categories = eval(task_metadata[parent_conversation_id]['ai_response'])
+                
+                # Find the next task after the current one
+                try:
+                    current_index = categories.index(current_task.capitalize())
+                    if current_index + 1 < len(categories):
+                        next_task = categories[current_index + 1]
+                        api_response = await process_task(next_task, conversation_history, sid, parent_conversation_id, categories, task_metadata)
+                        
+                except ValueError:
+                    print(f"Current task {current_task} not found in categories")
+
+                   
             return
         else:   
             print(f"Processing main chat message: {conversation_id}")
@@ -96,7 +128,8 @@ async def chat_message(sid, data):
                 'categories_count': 0,
                 'origin': "",
                 'destination': "",
-                'date': ""
+                'date': "",
+                'current_task': ""
             }
         
 
@@ -139,7 +172,8 @@ async def chat_message(sid, data):
                 await sio.emit('chat_response', {
                     'status': 'success',
                     'message': api_response,
-                    'conversation_id': conversation_id
+                    'conversation_id': conversation_id,
+                    'from': 'ai',
                 })
 
                 task_metadata[conversation_id]['current_status'] = False
@@ -153,50 +187,33 @@ async def chat_message(sid, data):
                 task_metadata[conversation_id]['generic']['data'] = ""
 
 
-        for task in categories:
-            task_lower = task.lower()
-            # Skip if task is already completed
+            for task in categories:
+                api_response = await process_task(task, conversation_history, sid, conversation_id, categories, task_metadata)
+                if api_response:
+                    await sio.emit('chat_response', {
+                        'status': 'success',
+                        'message': api_response,
+                        'conversation_id': conversation_id
+                    })
+                return
 
-            print("Task: ", task_lower)
-
-            if task_lower == "flights":
-                if task_metadata[conversation_id]['flights']['completed'] == False:
-                    print("I am calling search flights")
-                    api_response = await search_flights(conversation_history, sid, conversation_id, categories, task_metadata)  
-                    if api_response == "Flight information is required":
-                        return
-            elif task_lower == "hotels":
-                if task_metadata[conversation_id]['hotels']['completed'] == False:
-                    api_response = await search_hotels(conversation_history, sid, conversation_id, categories, task_metadata)
-            elif task_lower == "transports":
-                if task_metadata[conversation_id]['transports']['completed'] == False:
-                    api_response = await search_transfers()
-                    task_metadata[conversation_id]['transports']['completed'] = True
-                    task_metadata[conversation_id]['transports']['data'] = api_response
-            elif task_lower == "experiences":
-                if task_metadata[conversation_id]['experiences']['completed'] == False:
-                    api_response = await search_activities()
-                    task_metadata[conversation_id]['experiences']['completed'] = True
-                    task_metadata[conversation_id]['experiences']['data'] = api_response
-            else:
-                break
-        
-                
-            print("API response: ", api_response)
-
-            await sio.emit('chat_response', {
-                'status': 'success',
-                'message': api_response,
-                'conversation_id': conversation_id
-            })
-
-        
         if task_metadata[conversation_id]['categories_count'] == 0:
+
+            task_metadata[conversation_id]['step_by_step']['completed'] = False
+            task_metadata[conversation_id]['generic']['completed'] = False
+            task_metadata[conversation_id]['step_by_step']['data'] = None
+            task_metadata[conversation_id]['generic']['data'] = None
+
+            print("Task metadata: ", task_metadata)
+
             await sio.emit('chat_response', {
                 'status': 'success',
                 'message': "All tasks completed",
                 'conversation_id': conversation_id
             })
+
+
+            
 
         task_metadata[conversation_id]['transports']['completed'] = True
         task_metadata[conversation_id]['experiences']['completed'] = True
@@ -233,46 +250,98 @@ async def accessTokens():
     return access_token
     
 
+def validate_task_info_response(response, category):
+    """
+    Validates that the GPT response is in the correct format for flight information.
+    Returns (bool, dict): Tuple of (is_valid, parsed_response)
+    """
+    try:
+        # Try to evaluate the response string as a dictionary
+        response_dict = eval(response)
+        
+        # Check if it's a dictionary
+        if not isinstance(response_dict, dict):
+            print("Response is not a dictionary")
+            return False, None
+            
+        # Check if all required keys are present
+        if category == "flights":
+            required_keys = {'origin', 'destination', 'date'}
+        elif category == "hotels":
+            required_keys = {'destination', 'date'}
+       
+
+        if not all(key in response_dict for key in required_keys):
+            print("Missing required keys")
+            return False, None
+            
+        # Check if values are strings
+        if not all(isinstance(response_dict[key], str) for key in required_keys):
+            print("Invalid value types")
+            return False, None
+            
+        return True, response_dict
+        
+    except Exception as e:
+        print(f"Failed to parse response: {e}")
+        return False, None
+
+
 async def search_flights(conversation_history, sid, conversation_id, categories, task_metadata, origin="", destination="", date=""):
     print("Search flights")
     not_all_information_available = True
 
     while(not_all_information_available):
         system_prompt = f'''
-        You are a flight search assistant. Your responsibility is to search for information such as origin, destination and date from the use conversation history.
+            You are a flight search assistant. Your responsibility is to search for information such as origin, destination and date from the use conversation history and respond in the following format.
 
-            if all 3 information is available, then return the information in the following format:
-            Example
+            if all 3 information is available, then return the information in the following json format:
+            Response Example:
             {{
-                origin: "San Francisco",
-                destination: "New York",
-                date: "2025-01-01"
+                "origin": "San Francisco",
+                "destination": "New York",
+                "date": "2025-01-01"
             }}
 
-            if any of the information is missing, then return the information in the following format:
-            Example:
+            if any of the information is missing, then return the information in the following json format:
+            Response Example:
             {{
-                origin: "San Francisco",
-                destination: "New York",
-                date: "not_available"
+                "origin": "San Francisco",
+                "destination": "not_available",
+                "date": "2025-01-01"
             }}
 
-            Stick with the format.
+            Response Example:
+            {{
+                "origin": "San Francisco",
+                "destination": "not_available",
+                "date": "not_available"
+            }}  
+
+            Rule: Stick with the above format, no other response is allowed. You should not ask any questions.
             '''
             
-        # Format the conversation history to just include messages
         formatted_messages = []
         for msg in conversation_history:
             if isinstance(msg, dict) and 'message' in msg:
-                formatted_messages.append(msg['message'])
+                # Skip messages containing card data or flight results
+                if not isinstance(msg['message'], dict) and msg.get('type') != 'flight-result':
+                    formatted_messages.append(msg['message'])
         
-        # Join all messages into a single string
         conversation_text = "\n".join(formatted_messages)
         
         response = gpt_response(system_prompt, conversation_text)
+
+        print("Response: ", response)
+        is_valid, flight_info = validate_task_info_response(response, "flights")
+        
+        if not is_valid:
+            print("Invalid response format, retrying...")
+            continue
+
         print("Flight info response:", response)
 
-        if "not_available" in response:
+        if "not_available" in flight_info['origin'] or "not_available" in flight_info['destination'] or "not_available" in flight_info['date']:
             system_prompt = f'''
             Based on this user response:
             Create a clear question asking the user to provide the missing information.
@@ -281,7 +350,6 @@ async def search_flights(conversation_history, sid, conversation_id, categories,
                 
             question = gpt_response(system_prompt, response)
             
-                
             # Send question to user and wait for response
             await sio.emit('chat_response', {
                 'status': 'success',
@@ -309,77 +377,77 @@ async def search_flights(conversation_history, sid, conversation_id, categories,
 
             # Now that we have all information, perform the actual flight search
 
-        try:
-            if task_metadata[conversation_id]['flight_search_completed'] == False:
+    try:
+        if task_metadata[conversation_id]['flight_search_completed'] == False:
 
-                access_token = await accessTokens();
+            access_token = await accessTokens();
 
-                print(access_token, "flight")
+            print(access_token, "flight")
 
-                url = f"https://test.api.amadeus.com/v2/shopping/flight-offers?originLocationCode={origin}&destinationLocationCode={destination}&departureDate={date}&adults=1&nonStop=true&currencyCode=USD"
+            url = f"https://test.api.amadeus.com/v2/shopping/flight-offers?originLocationCode={origin.upper()}&destinationLocationCode={destination.upper()}&departureDate={date}&adults=1&nonStop=true&currencyCode=USD"
 
-                payload = {}
-                files={}
-                headers = {
-                'Authorization': f'Bearer {access_token}'
-                }
+            payload = {}
+            files={}
+            headers = {
+            'Authorization': f'Bearer {access_token}'
+            }
 
-                flight_response = requests.request("GET", url, headers=headers, data=payload, files=files) 
+            flight_response = requests.request("GET", url, headers=headers, data=payload, files=files) 
 
-                flight_data = flight_response.json()
+            flight_data = flight_response.json()
 
-                print("flight_response: ", flight_data)
+            print("flight_response: ", flight_data)
 
-                # Validate flight data structure
-                if isinstance(flight_data, dict) and 'data' in flight_data:
-                    await sio.emit('chat_response', {
-                        'status': 'success',
-                        'data': flight_data['data'],
-                        'type': 'flight-results',
-                        'message': 'Flight search completed',
-                        'from': 'ai',
-                        'conversation_id': conversation_id
-                    })
-
-                    await sio.emit('chat_response', {
-                    'status': 'success',
-                    'message': "Flight search is completed please select a flight to book",
-                    'conversation_id': conversation_id
-                })
-
-                else:
-                    await sio.emit('chat_response', {
-                        'status': 'error',
-                        'message': 'No flight data available, please try again',
-                        'type': 'flight-results',
-                        'from': 'ai',
-                        'conversation_id': conversation_id
-                    })
-
-                task_metadata[conversation_id]['flights']['completed'] = True
-                task_metadata[conversation_id]['flights']['data'] = flight_data
-
-                
-                task_metadata[conversation_id]['flight_search_completed'] = True
-
-                return "flight search completed"
-
-            else:
-
+            # Validate flight data structure
+            if isinstance(flight_data, dict) and 'data' in flight_data:
                 await sio.emit('chat_response', {
                     'status': 'success',
-                    'message': "Flight booking is completed",
+                    'data': flight_data['data'],
+                    'type': 'flight-results',
+                    'message': 'Flight search completed',
+                    'from': 'ai',
                     'conversation_id': conversation_id
                 })
 
-                return "flight booked"
+                await sio.emit('chat_response', {
+                'status': 'success',
+                'message': "Flight search is completed please select a flight to book",
+                'conversation_id': conversation_id
+            })
+
+            else:
+                await sio.emit('chat_response', {
+                    'status': 'error',
+                    'message': 'No flight data available, please try again',
+                    'type': 'flight-results',
+                    'from': 'ai',
+                    'conversation_id': conversation_id
+                })
+
+            task_metadata[conversation_id]['flights']['completed'] = True
+            task_metadata[conversation_id]['flights']['data'] = flight_data
+
+            
+            task_metadata[conversation_id]['flight_search_completed'] = True
+
+            return "flight search completed"
+
+        else:
+
+            await sio.emit('chat_response', {
+                'status': 'success',
+                'message': "Flight booking is completed",
+                'conversation_id': conversation_id
+            })
+
+            return "flight booked"
 
 
 
-        
-        
-        except Exception as error:
-            raise Exception(str(error))
+    
+    
+    except Exception as error:
+        raise Exception(str(error))
 
     # finally:
     #     # Remove the event handler
@@ -393,8 +461,93 @@ async def search_hotels(conversation_history, sid, conversation_id, categories, 
     destination = task_metadata[conversation_id]['destination']
     date = task_metadata[conversation_id]['date']
 
+    await sio.emit('chat_response', {
+        'status': 'success',
+        'message': "Now booking hotel in destination",
+        'conversation_id': conversation_id
+    })
+    not_all_information_available = False
+
+    if destination == "" or date == "":
+        not_all_information_available = True
+
+    while(not_all_information_available):
+
+        system_prompt = f'''
+            You are a hotel search assistant. Your responsibility is to search for information such as destination and date from the use conversation history and respond in the following format.
+
+            if all 2 information is available, then return the information in the following json format:
+            Response Example:
+            {{
+                "destination": "JFK",
+                "date": "2025-01-01"
+            }}
+
+            if any of the information is missing, then return the information in the following json format:
+            Response Example:
+            {{
+                "destination": "JFK",
+                "date": "not_available"
+            }}  
+
+            Rule: Stick with the above format, no other response is allowed. You should not ask any questions.  
+        '''
+
+        formatted_messages = []
+        for msg in conversation_history:
+            if isinstance(msg, dict) and 'message' in msg:
+                # Skip messages containing card data or flight results
+                if not isinstance(msg['message'], dict) and msg.get('type') != 'flight-result':
+                    formatted_messages.append(msg['message'])
+        
+        conversation_text = "\n".join(formatted_messages)
+        
+        response = gpt_response(system_prompt, conversation_text)
+
+        print("Response: ", response)
+        is_valid, hotel_info = validate_task_info_response(response, "hotels")
+
+        if not is_valid:
+            print("Invalid response format, retrying...")
+            continue
+
+        print("Hotel info response:", response)
+
+        if "not_available" in hotel_info['destination'] or "not_available" in hotel_info['date']:
+            system_prompt = f'''
+            Based on this user response:
+            Create a clear question asking the user to provide the missing information.
+            Only ask for the missing fields, one at a time.
+            '''
+                
+            question = gpt_response(system_prompt, response)
+            
+            # Send question to user and wait for response
+            await sio.emit('chat_response', {
+                'status': 'success',
+                'message': question,
+                'requires_input': True,
+                'input_type': 'hotel_info',
+                'conversation_id': conversation_id
+            })
+
+            return "Hotel information is required"
+
+        else:
+            not_all_information_available = False
+            hotel_info = eval(response)
+            print("Complete hotel info:", hotel_info)
+
+            destination = hotel_info['destination']
+            date = hotel_info['date']
+
+            task_metadata[conversation_id]['destination'] = destination
+            task_metadata[conversation_id]['date'] = date
+
+     
+
     try:
-        url = f"https://test.api.amadeus.com/v1/reference-data/locations/hotels/by-city?cityCode={destination}"
+        url = f"https://test.api.amadeus.com/v1/reference-data/locations/hotels/by-city?cityCode={destination.upper()}"
 
         payload = {}
         headers = {
@@ -439,8 +592,22 @@ async def search_hotels(conversation_history, sid, conversation_id, categories, 
     except Exception as error:
         raise Exception(str(error))
 
-async def search_transfers(origin="", destination=""):
+async def search_transfers(conversation_id, origin="", destination=""):
     try:
+        await sio.emit('chat_response', {
+            'status': 'success',
+            'message': "Now booking car from airport to hotel",
+            'conversation_id': conversation_id
+        })
+
+
+
+        await sio.emit('chat_response', {
+            'status': 'success',
+            'message': "Car booking from airport to hotel is completed",
+            'conversation_id': conversation_id
+        })
+
         return "Car booking from airport to hotel is completed"
        
     except Exception as error:
@@ -512,10 +679,10 @@ async def get_step_by_step_response(categories, sid, conversation_id):
         categories: ["Flight", "Hotel"]
         Response:
         I'll take a following steps to book a flight and a hotel for you: \n
-        1. I'll search for flights from San Francisco to New York. \n
+        1. I'll search for flights from origin to destination. \n
         2. I'll display the flights to you. \n
         3. I'll book the flight for you. \n
-        4. I'll search for hotels in New York. \n
+        4. I'll search for hotels in destination. \n
         5. I'll display the hotels to you. \n
         6. I'll book the hotel for you. \n
 
@@ -595,8 +762,34 @@ async def identify_categories(message, conversation_history, sid, conversation_i
 
     return ai_response
 
-
-
+async def process_task(task, conversation_history, sid, conversation_id, categories, task_metadata):
+    task_lower = task.lower()
+    print("Task: ", task_lower)
+    
+    if task_lower == "flights" and not task_metadata[conversation_id]['flights']['completed']:
+        print("I am calling search flights")
+        task_metadata[conversation_id]['current_task'] = "flights"
+        await search_flights(conversation_history, sid, conversation_id, categories, task_metadata)
+        return
+        
+    elif task_lower == "hotels" and not task_metadata[conversation_id]['hotels']['completed']:
+        task_metadata[conversation_id]['current_task'] = "hotels"
+        await search_hotels(conversation_history, sid, conversation_id, categories, task_metadata)
+        return
+    
+    elif task_lower == "transports" and not task_metadata[conversation_id]['transports']['completed']:
+        task_metadata[conversation_id]['current_task'] = "transports"
+        await search_transfers(conversation_id)
+        task_metadata[conversation_id]['transports']['completed'] = True
+        return 
+        
+    elif task_lower == "experiences" and not task_metadata[conversation_id]['experiences']['completed']:
+        task_metadata[conversation_id]['current_task'] = "experiences"
+        await search_activities()
+        task_metadata[conversation_id]['experiences']['completed'] = True
+        return 
+    
+    return
 
 if __name__ == '__main__':
     web.run_app(app, host='0.0.0.0', port=8000)
