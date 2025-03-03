@@ -28,6 +28,7 @@ interface MessageType {
   message: string;
   from: 'user' | 'ai';
   conversation_id?: string;
+  parent_conversation_id?: string;
 }
 
 interface FlightLinks {
@@ -37,21 +38,68 @@ interface FlightLinks {
 
 interface FlightData {
   type: string;
-  origin: string;
-  destination: string;
-  departureDate: string;
-  returnDate: string;
-  price: FlightPrice;
-  links: FlightLinks;
+  id: string;
+  source: string;
+  itineraries: {
+    duration: string;
+    segments: {
+      departure: {
+        iataCode: string;
+        terminal?: string;
+        at: string;
+      };
+      arrival: {
+        iataCode: string;
+        terminal?: string;
+        at: string;
+      };
+      carrierCode: string;
+      number: string;
+    }[];
+  }[];
+  price: {
+    currency: string;
+    total: string;
+    base: string;
+    grandTotal: string;
+  };
+}
+
+interface HotelData {
+  type: string;
+  id: string;
+  name: string;
+  address: {
+    cityName: string;
+  };
+  rating: {
+    score: string;
+  };
+}
+
+// Add this interface with other interfaces
+interface StepByStepState {
+  isOpen: boolean;
+  content: string;
 }
 
 // Add this component above the Home component
 const FlightCard = ({ flight, messages, setMessages, saveToSupabase }: { flight: FlightData, messages: MessageType[], setMessages: (messages: any) => void, saveToSupabase: (message: string, from: 'user' | 'ai', type: string|null, data: any|null, conversation_id?: string) => void  }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [sheetMessage, setSheetMessage] = useState("");
-  const conversationId = useRef(`flight_${flight.origin}_${flight.destination}_${flight.departureDate}`);
   
+  // Get the parent conversation ID from the most recent flight search message
+  const parentConversationId = messages
+    .filter(msg => msg.type === 'flight-results')
+    .pop()?.conversation_id || 'main_chat';
 
+  // Create child conversation ID with parent reference
+  const conversationId = useRef(
+    `child_${flight.itineraries[0].segments[0].departure.iataCode}-` +
+    `${flight.itineraries[0].segments[0].arrival.iataCode}_` +
+    `${new Date(flight.itineraries[0].segments[0].departure.at).toISOString().split('T')[0]}_` +
+    `${flight.itineraries[0].segments[0].carrierCode}${flight.itineraries[0].segments[0].number}`
+  );
 
   const handleSheetSend = async () => {
     if (!sheetMessage.trim()) return;
@@ -59,22 +107,26 @@ const FlightCard = ({ flight, messages, setMessages, saveToSupabase }: { flight:
     const newMessage = {
       message: sheetMessage,
       from: 'user' as "user"|"ai",
-      conversation_id: conversationId.current
+      conversation_id: conversationId.current,
+      parent_conversation_id: parentConversationId
     } as MessageType;
 
-    // Send message to backend with flight context
+    // Get only relevant messages for this conversation
+    const relevantMessages = messages.filter(msg => msg.conversation_id === conversationId.current);
+
+    // Send message to backend with flight context and parent conversation ID
     socket.emit('chat_message', {
-      messages: [...messages, newMessage],
+      messages: [...relevantMessages, newMessage],
       context: {
         flightDetails: flight,
-        conversation_id: conversationId.current
+        conversation_id: conversationId.current,
+        parent_conversation_id: parentConversationId
       }
     });
 
-    setMessages((prev: any) => [...prev, newMessage]);
+    setMessages((prev: MessageType[]) => [...prev, newMessage]);
     setSheetMessage("");
     
-    // Save to Supabase with conversation_id
     await saveToSupabase(sheetMessage, 'user', null, null, conversationId.current);
   };
 
@@ -85,101 +137,99 @@ const FlightCard = ({ flight, messages, setMessages, saveToSupabase }: { flight:
         onClick={() => setIsOpen(true)}
       >
         <div className="flex justify-between items-center mb-2">
-          <h3 className="text-lg font-semibold">{flight.origin} → {flight.destination}</h3>
+          <h3 className="text-lg font-semibold text-blue-600">
+            {flight.itineraries[0].segments[0].departure.iataCode} → {flight.itineraries[0].segments[0].arrival.iataCode}
+          </h3>
           <span className="text-xl font-bold text-blue-600">${flight.price.total}</span>
         </div>
         <div className="text-sm text-gray-600">
-          <p>Departure: {new Date(flight.departureDate).toLocaleDateString()}</p>
-          <p>Return: {new Date(flight.returnDate).toLocaleDateString()}</p>
+          <p>Departure: {new Date(flight.itineraries[0].segments[0].departure.at).toLocaleDateString()}</p>
+          <p>Return: {new Date(flight.itineraries[0].segments[0].arrival.at).toLocaleDateString()}</p>
         </div>
       </div>
 
       <Sheet open={isOpen} onOpenChange={setIsOpen}>
-        <SheetContent className="flex flex-col h-full">
-          <SheetHeader>
-            <SheetTitle>Flight Details</SheetTitle>
-            <SheetDescription>
-              <div className="space-y-4 mt-4">
-                <div>
-                  <h3 className="text-lg font-semibold">Route</h3>
-                  <p>{flight.origin} → {flight.destination}</p>
-                </div>
-                <div>
-                  <h3 className="text-lg font-semibold">Dates</h3>
-                  <p>Departure: {new Date(flight.departureDate).toLocaleDateString()}</p>
-                  <p>Return: {new Date(flight.returnDate).toLocaleDateString()}</p>
-                </div>
-                <div>
-                  <h3 className="text-lg font-semibold">Price</h3>
-                  <p className="text-xl font-bold text-blue-600">${flight.price.total}</p>
-                </div>
-                <div>
-                  <h3 className="text-lg font-semibold">Links</h3>
-                  <a 
-                    href={flight.links.flightOffers} 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    className="text-blue-500 hover:underline block"
-                  >
-                    View Flight Offer
-                  </a>
-                  <a 
-                    href={flight.links.flightDates} 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    className="text-blue-500 hover:underline block"
-                  >
-                    View Flight Dates
-                  </a>
+        <SheetContent>
+          <div className="flex flex-col h-full">
+            <div className="flex-1 overflow-y-auto">
+              <SheetHeader>
+                <SheetTitle>Flight Details</SheetTitle>
+                <SheetDescription>
+                  <div className="space-y-4 mt-4">
+                    <div>
+                      <h3 className="text-lg font-semibold">Route</h3>
+                      <p>{flight.itineraries[0].segments[0].departure.iataCode} → {flight.itineraries[0].segments[0].arrival.iataCode}</p>
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-semibold">Dates</h3>
+                      <p>Departure: {new Date(flight.itineraries[0].segments[0].departure.at).toLocaleDateString()}</p>
+                      <p>Return: {new Date(flight.itineraries[0].segments[0].arrival.at).toLocaleDateString()}</p>
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-semibold">Price</h3>
+                      <p className="text-xl font-bold text-blue-600">${flight.price.total}</p>
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-semibold">Flight Details</h3>
+                      <p>Flight Number: {flight.itineraries[0].segments[0].carrierCode} {flight.itineraries[0].segments[0].number}</p>
+                      <p>Duration: {flight.itineraries[0].duration}</p>
+                      {flight.itineraries[0].segments[0].departure.terminal && (
+                        <p>Departure Terminal: {flight.itineraries[0].segments[0].departure.terminal}</p>
+                      )}
+                      {flight.itineraries[0].segments[0].arrival.terminal && (
+                        <p>Arrival Terminal: {flight.itineraries[0].segments[0].arrival.terminal}</p>
+                      )}
+                    </div>
+                  </div>
+                </SheetDescription>
+              </SheetHeader>
+
+              {/* Chat Section */}
+              <div className="mt-6">
+                <div className="space-y-4">
+                  {messages.filter((msg: MessageType) => msg.conversation_id === conversationId.current).map((msg, index) => (
+                    <div 
+                      key={index} 
+                      className={`flex items-start ${msg.from === 'user' ? 'justify-end' : 'justify-start'}`}
+                    >
+                      <div 
+                        className={`rounded-lg p-3 max-w-[70%] ${
+                          msg.from === 'user' 
+                            ? 'bg-gray-200 text-gray-800' 
+                            : 'bg-blue-500 text-white'
+                        }`}
+                      >
+                        <p>{msg.message}</p>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
-            </SheetDescription>
-          </SheetHeader>
-
-          {/* Chat Section */}
-          <div className="flex-1 overflow-y-auto mt-6">
-            <div className="space-y-4">
-              {messages.filter((msg: MessageType) => msg.conversation_id === conversationId.current).map((msg, index) => (
-                <div 
-                  key={index} 
-                  className={`flex items-start ${msg.from === 'user' ? 'justify-end' : 'justify-start'}`}
-                >
-                  <div 
-                    className={`rounded-lg p-3 max-w-[70%] ${
-                      msg.from === 'user' 
-                        ? 'bg-gray-200 text-gray-800' 
-                        : 'bg-blue-500 text-white'
-                    }`}
-                  >
-                    <p>{msg.message}</p>
-                  </div>
-                </div>
-              ))}
             </div>
-          </div>
 
-          {/* Input Area */}
-          <div className="border-t mt-4 pt-4">
-            <div className="flex space-x-2">
-              <input
-                type="text"
-                value={sheetMessage}
-                onChange={(e) => setSheetMessage(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSheetSend();
-                  }
-                }}
-                placeholder="Ask about this flight..."
-                className="flex-1 border rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <button 
-                onClick={handleSheetSend} 
-                className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors"
-              >
-                Send
-              </button>
+            {/* Input Area - Fixed at bottom */}
+            <div className="border-t mt-4 pt-4 bg-white">
+              <div className="flex space-x-2">
+                <input
+                  type="text"
+                  value={sheetMessage}
+                  onChange={(e) => setSheetMessage(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSheetSend();
+                    }
+                  }}
+                  placeholder="Ask about this flight..."
+                  className="flex-1 border rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <button 
+                  onClick={handleSheetSend} 
+                  className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors"
+                >
+                  Send
+                </button>
+              </div>
             </div>
           </div>
         </SheetContent>
@@ -195,6 +245,12 @@ export default function Home() {
   ]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const mainConversationId = useRef('main_chat');
+
+  // Add this new state
+  const [stepByStep, setStepByStep] = useState<StepByStepState>({
+    isOpen: false,
+    content: ''
+  });
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -224,6 +280,15 @@ export default function Home() {
         console.error('Invalid response format:', response);
         return;
       }
+
+      // Add step-by-step handling
+      if (response.type === 'step_by_step_response') {
+        setStepByStep({
+          isOpen: true,
+          content: response.message
+        });
+      }
+
       // Add AI response to messages and save to Supabase
       const aiMessage = response.message;
       const aiData = response.data as FlightData[];
@@ -304,13 +369,33 @@ export default function Home() {
 
   return (
     <div className="flex flex-col h-screen bg-gray-100">
-      {/* Header */}
+      {/* Add Sidebar */}
+      {stepByStep.isOpen && (
+        <div className="fixed left-0 top-0 h-full w-64 bg-white shadow-lg p-4 overflow-y-auto">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-lg font-bold">Trip Planning Steps</h2>
+            <button 
+              onClick={() => setStepByStep(prev => ({ ...prev, isOpen: false }))}
+              className="text-gray-500 hover:text-gray-700"
+            >
+              ×
+            </button>
+          </div>
+          <div className="prose">
+            {stepByStep.content.split('\n').map((line, index) => (
+              <p key={index}>{line}</p>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Existing layout */}
       <header className="bg-white shadow p-4">
         <h1 className="text-xl font-bold text-gray-800">BrainBase Chatbot</h1>
       </header>
 
-      {/* Chat Container */}
-      <div className="flex-1 overflow-y-auto p-4">
+      {/* Add margin-left when sidebar is open */}
+      <div className={`flex-1 overflow-y-auto p-4 ${stepByStep.isOpen ? 'ml-64' : ''}`}>
         <div className="space-y-4">
           {/* Bot's initial message */}
           <div className="flex items-start">
@@ -351,8 +436,8 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Input Area */}
-      <div className="bg-white border-t p-4">
+      {/* Add margin-left to input area when sidebar is open */}
+      <div className={`bg-white border-t p-4 ${stepByStep.isOpen ? 'ml-64' : ''}`}>
         <div className="flex space-x-2">
           <input
             type="text"
