@@ -5,6 +5,7 @@ import os
 from dotenv import load_dotenv
 import requests
 import asyncio
+from datetime import datetime
 
 # Load environment variables
 load_dotenv()
@@ -305,6 +306,32 @@ def validate_task_info_response(response, category):
         return False, None
 
 
+def is_valid_future_date(date_str):
+    """
+    Check if the given date string is:
+    1. In a valid format (YYYY-MM-DD)
+    2. Not in the past
+    3. Updates year to current year
+    
+    Returns: str - updated_date with current year
+    """
+    try:
+        # Parse the date string
+        date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+        
+        # Get today's date
+        today = datetime.now().date()
+        
+        # Update the year to current year
+        updated_date = date_obj.replace(year=today.year)
+        updated_date_str = updated_date.strftime('%Y-%m-%d')
+        
+        return updated_date_str
+        
+    except ValueError:
+        raise Exception("Invalid date format. Please use YYYY-MM-DD format")
+
+
 async def search_flights(conversation_history, sid, conversation_id, categories, task_metadata, origin="", destination="", date=""):
     print("Search flights")
     not_all_information_available = True
@@ -388,9 +415,25 @@ async def search_flights(conversation_history, sid, conversation_id, categories,
             destination = flight_info['destination']
             date = flight_info['date']
 
-            task_metadata[conversation_id]['origin'] = origin
-            task_metadata[conversation_id]['destination'] = destination
-            task_metadata[conversation_id]['date'] = date
+            # Validate and update the date to current year
+            updated_date = is_valid_future_date(date)
+            date = updated_date
+            
+
+            # Get airport codes
+            access_token = await accessTokens()
+            origin_code = await get_airport_code(origin, access_token)
+            origin = origin_code
+            destination_code = await get_airport_code(destination, access_token)
+            destination = destination_code
+
+            print("Origin: ", origin)
+            print("Destination: ", destination)
+            print("Date: ", date)
+            
+            task_metadata[conversation_id]['origin'] = origin_code
+            task_metadata[conversation_id]['destination'] = destination_code
+            task_metadata[conversation_id]['date'] = updated_date
 
     # ReturnFlight = True
     # while(ReturnFlight == True):
@@ -446,7 +489,7 @@ async def search_flights(conversation_history, sid, conversation_id, categories,
 
             print(access_token, "flight")
 
-            url = f"https://test.api.amadeus.com/v2/shopping/flight-offers?originLocationCode={origin.upper()}&destinationLocationCode={destination.upper()}&departureDate={date}&adults=1&nonStop=true&currencyCode=USD"
+            url = f"https://test.api.amadeus.com/v2/shopping/flight-offers?originLocationCode={origin_code}&destinationLocationCode={destination_code}&departureDate={updated_date}&adults=1&nonStop=true&currencyCode=USD"
 
             payload = {}
             files={}
@@ -869,6 +912,41 @@ def follow_up_response(context, user_message, conversation_id):
         response = "booking_completed"
 
     return response
+
+def is_iata_code(location):
+    """
+    Check if the given location string is an IATA airport code.
+    IATA codes are always 3 uppercase letters.
+    """
+    return bool(location and 
+               len(location) == 3 and 
+               location.isalpha() and 
+               location.isupper())
+
+# Modify the get_airport_code function to use this check:
+async def get_airport_code(city_name, access_token):
+    """Convert city name to airport code using Amadeus API if needed"""
+    try:
+        # If it's already an IATA code, return it directly
+        if is_iata_code(city_name):
+            return city_name
+            
+        url = f"https://test.api.amadeus.com/v1/reference-data/locations?subType=CITY&keyword={city_name}"
+        
+        headers = {
+            'Authorization': f'Bearer {access_token}'
+        }
+        
+        response = requests.request("GET", url, headers=headers)
+        data = response.json()
+        
+        if 'data' in data and len(data['data']) > 0:
+            return data['data'][0]['iataCode']
+        else:
+            raise Exception(f"No airport code found for city: {city_name}")
+            
+    except Exception as error:
+        raise Exception(f"Error getting airport code: {str(error)}")
 
 if __name__ == '__main__':
     web.run_app(app, host='0.0.0.0', port=8000)

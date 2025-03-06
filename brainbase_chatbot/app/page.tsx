@@ -158,38 +158,36 @@ const FlightCard = ({ flight, messages, setMessages, saveToSupabase }: { flight:
             <div className="flex-1 overflow-y-auto">
               <SheetHeader>
                 <SheetTitle>Flight Details</SheetTitle>
-                <SheetDescription>
-                  <div className="space-y-4 mt-4">
-                    <div>
-                      <h3 className="text-lg font-semibold">Route</h3>
-                      <p>{flight.itineraries[0].segments[0].departure.iataCode} → {flight.itineraries[0].segments[0].arrival.iataCode}</p>
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-semibold">Times</h3>
-                      <p>Departure: {new Date(flight.itineraries[0].segments[0].departure.at).toLocaleString()}</p>
-                      <p>Arrival: {new Date(flight.itineraries[0].segments[0].arrival.at).toLocaleString()}</p>
-                      <p>Duration: {flight.itineraries[0].duration}</p>
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-semibold">Airline</h3>
-                      <p>Carrier: {flight.itineraries[0].segments[0].carrierCode}</p>
-                      <p>Flight: {flight.itineraries[0].segments[0].carrierCode} {flight.itineraries[0].segments[0].number}</p>
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-semibold">Price</h3>
-                      <p className="text-xl font-bold text-blue-600">${flight.price.total}</p>
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-semibold">Additional Details</h3>
-                      {flight.itineraries[0].segments[0].departure.terminal && (
-                        <p>Departure Terminal: {flight.itineraries[0].segments[0].departure.terminal}</p>
-                      )}
-                      {flight.itineraries[0].segments[0].arrival.terminal && (
-                        <p>Arrival Terminal: {flight.itineraries[0].segments[0].arrival.terminal}</p>
-                      )}
-                    </div>
+                <div className="space-y-4 mt-4 text-gray-600">
+                  <div>
+                    <h3 className="text-lg font-semibold">Route</h3>
+                    <p>{flight.itineraries[0].segments[0].departure.iataCode} → {flight.itineraries[0].segments[0].arrival.iataCode}</p>
                   </div>
-                </SheetDescription>
+                  <div>
+                    <h3 className="text-lg font-semibold">Times</h3>
+                    <p>Departure: {new Date(flight.itineraries[0].segments[0].departure.at).toLocaleString()}</p>
+                    <p>Arrival: {new Date(flight.itineraries[0].segments[0].arrival.at).toLocaleString()}</p>
+                    <p>Duration: {flight.itineraries[0].duration}</p>
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold">Airline</h3>
+                    <p>Carrier: {flight.itineraries[0].segments[0].carrierCode}</p>
+                    <p>Flight: {flight.itineraries[0].segments[0].carrierCode} {flight.itineraries[0].segments[0].number}</p>
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold">Price</h3>
+                    <p className="text-xl font-bold text-blue-600">${flight.price.total}</p>
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold">Additional Details</h3>
+                    {flight.itineraries[0].segments[0].departure.terminal && (
+                      <p>Departure Terminal: {flight.itineraries[0].segments[0].departure.terminal}</p>
+                    )}
+                    {flight.itineraries[0].segments[0].arrival.terminal && (
+                      <p>Arrival Terminal: {flight.itineraries[0].segments[0].arrival.terminal}</p>
+                    )}
+                  </div>
+                </div>
               </SheetHeader>
 
               {/* Chat Section */}
@@ -319,27 +317,25 @@ const HotelCard = ({ hotel, messages, setMessages, saveToSupabase }: {
             <div className="flex-1 overflow-y-auto">
               <SheetHeader>
                 <SheetTitle>Hotel Details</SheetTitle>
-                <SheetDescription>
-                  <div className="space-y-4 mt-4">
-                    <div>
-                      <h3 className="text-lg font-semibold">Hotel Name</h3>
-                      <p>{hotel.name}</p>
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-semibold">Location</h3>
-                      <p>Airport Code: {hotel.iataCode}</p>
-                      <p>Coordinates: {hotel.geoCode.latitude}, {hotel.geoCode.longitude}</p>
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-semibold">Chain</h3>
-                      <p>{hotel.chainCode}</p>
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-semibold">Country</h3>
-                      <p>{hotel.address.countryCode}</p>
-                    </div>
+                <div className="space-y-4 mt-4 text-gray-600">
+                  <div>
+                    <h3 className="text-lg font-semibold">Hotel Name</h3>
+                    <p>{hotel.name}</p>
                   </div>
-                </SheetDescription>
+                  <div>
+                    <h3 className="text-lg font-semibold">Location</h3>
+                    <p>Airport Code: {hotel.iataCode}</p>
+                    <p>Coordinates: {hotel.geoCode.latitude}, {hotel.geoCode.longitude}</p>
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold">Chain</h3>
+                    <p>{hotel.chainCode}</p>
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold">Country</h3>
+                    <p>{hotel.address?.countryCode || 'Not specified'}</p>
+                  </div>
+                </div>
               </SheetHeader>
 
               {/* Chat Section */}
@@ -578,7 +574,7 @@ export default function Home() {
                 >
                   {msg.data && Array.isArray(msg.data) && (msg.type === 'flight-results' || msg.type === 'hotel-results') ? (
                     <div className="space-y-2">
-                      {msg.data.map((item: FlightData | HotelData, idx: number) => (
+                      {msg.data.slice(0, 10).map((item: FlightData | HotelData, idx: number) => (
                         'type' in item ? (
                           <FlightCard key={idx} flight={item as FlightData} messages={messages} setMessages={setMessages} saveToSupabase={saveToSupabase} />
                         ) : (
